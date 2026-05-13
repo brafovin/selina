@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Roll a Die</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #f5f5f7;
+    --accent: #ff5252;
+    --face: #fafafa;
+    --pip: #1a1a1a;
+    --face-edge: #d8d8d8;
+    --size: 160px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: radial-gradient(ellipse at top, #1a1f2c 0%, var(--bg) 70%);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    overflow: hidden;
+  }
+
+  h1 {
+    font-weight: 300;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-size: 0.9rem;
+    color: #8b8d97;
+    margin: 0 0 2rem;
+  }
+
+  .stage {
+    width: var(--size);
+    height: var(--size);
+    perspective: 800px;
+    margin-bottom: 3rem;
+  }
+
+  .die {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    transform: rotateX(-20deg) rotateY(25deg);
+    transition: transform 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+    cursor: pointer;
+  }
+
+  .die.rolling {
+    transition: transform 1.4s cubic-bezier(0.34, 1.2, 0.64, 1);
+  }
+
+  .face {
+    position: absolute;
+    width: var(--size);
+    height: var(--size);
+    background: var(--face);
+    border: 2px solid var(--face-edge);
+    border-radius: 18px;
+    display: grid;
+    grid-template-areas:
+      "a . c"
+      "e g f"
+      "d . b";
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    padding: 18px;
+    box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.05);
+  }
+
+  .pip {
+    width: 22px;
+    height: 22px;
+    background: var(--pip);
+    border-radius: 50%;
+    align-self: center;
+    justify-self: center;
+    box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.25),
+                inset 0 -2px 3px rgba(0, 0, 0, 0.4);
+  }
+
+  .pos-a { grid-area: a; }
+  .pos-b { grid-area: b; }
+  .pos-c { grid-area: c; }
+  .pos-d { grid-area: d; }
+  .pos-e { grid-area: e; }
+  .pos-f { grid-area: f; }
+  .pos-g { grid-area: g; }
+
+  .face-1 { transform: rotateY(  0deg) translateZ(calc(var(--size) / 2)); }
+  .face-2 { transform: rotateY( 90deg) translateZ(calc(var(--size) / 2)); }
+  .face-3 { transform: rotateY(180deg) translateZ(calc(var(--size) / 2)); }
+  .face-4 { transform: rotateY(-90deg) translateZ(calc(var(--size) / 2)); }
+  .face-5 { transform: rotateX( 90deg) translateZ(calc(var(--size) / 2)); }
+  .face-6 { transform: rotateX(-90deg) translateZ(calc(var(--size) / 2)); }
+
+  .controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  button {
+    background: var(--accent);
+    color: white;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.85rem 1.8rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: transform 0.1s ease, opacity 0.2s ease;
+    box-shadow: 0 6px 20px rgba(255, 82, 82, 0.4);
+  }
+
+  button:hover { transform: translateY(-1px); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .result {
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+    color: #8b8d97;
+    height: 1.2em;
+  }
+
+  .result strong {
+    color: var(--fg);
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+  <h1>Roll a Die</h1>
+
+  <div class="stage">
+    <div class="die" id="die">
+      <div class="face face-1"><span class="pip pos-g"></span></div>
+      <div class="face face-2">
+        <span class="pip pos-a"></span>
+        <span class="pip pos-b"></span>
+      </div>
+      <div class="face face-3">
+        <span class="pip pos-a"></span>
+        <span class="pip pos-g"></span>
+        <span class="pip pos-b"></span>
+      </div>
+      <div class="face face-4">
+        <span class="pip pos-a"></span>
+        <span class="pip pos-c"></span>
+        <span class="pip pos-d"></span>
+        <span class="pip pos-b"></span>
+      </div>
+      <div class="face face-5">
+        <span class="pip pos-a"></span>
+        <span class="pip pos-c"></span>
+        <span class="pip pos-g"></span>
+        <span class="pip pos-d"></span>
+        <span class="pip pos-b"></span>
+      </div>
+      <div class="face face-6">
+        <span class="pip pos-a"></span>
+        <span class="pip pos-c"></span>
+        <span class="pip pos-e"></span>
+        <span class="pip pos-f"></span>
+        <span class="pip pos-d"></span>
+        <span class="pip pos-b"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="roll-btn">Roll</button>
+  </div>
+  <div class="result" id="result">Tap the die or press Roll</div>
+
+<script>
+  const FACE_ROTATIONS = {
+    1: { x:    0, y:    0 },
+    2: { x:    0, y:  -90 },
+    3: { x:    0, y: -180 },
+    4: { x:    0, y:   90 },
+    5: { x:  -90, y:    0 },
+    6: { x:   90, y:    0 },
+  };
+
+  const die = document.getElementById('die');
+  const btn = document.getElementById('roll-btn');
+  const result = document.getElementById('result');
+
+  let rolls = 0;
+  let lastValue = null;
+
+  function roll() {
+    if (die.classList.contains('rolling')) return;
+
+    let value;
+    do {
+      value = 1 + Math.floor(Math.random() * 6);
+    } while (value === lastValue && Math.random() < 0.5);
+    lastValue = value;
+
+    const target = FACE_ROTATIONS[value];
+    const spinsX = (Math.floor(Math.random() * 3) + 3) * 360;
+    const spinsY = (Math.floor(Math.random() * 3) + 3) * 360;
+
+    die.classList.add('rolling');
+    die.style.transform =
+      `rotateX(${target.x - 20 + spinsX}deg) ` +
+      `rotateY(${target.y + 25 + spinsY}deg)`;
+
+    btn.disabled = true;
+    setTimeout(() => {
+      die.classList.remove('rolling');
+      die.style.transform =
+        `rotateX(${target.x - 20}deg) rotateY(${target.y + 25}deg)`;
+      btn.disabled = false;
+      rolls += 1;
+      result.innerHTML = `Rolled <strong>${value}</strong> &middot; ${rolls} roll${rolls === 1 ? '' : 's'}`;
+    }, 1400);
+  }
+
+  btn.addEventListener('click', roll);
+  die.addEventListener('click', roll);
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.key === 'Enter') {
+      e.preventDefault();
+      roll();
+    }
+  });
+</script>
+</body>
+</html>
