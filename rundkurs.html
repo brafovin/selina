@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Rundkurs-Rennen</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#111; font-family:Arial,sans-serif; color:#fff; overflow:hidden; }
+  #wrapper { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; }
+  #game { background:#3a8b3a; border:4px solid #444; border-radius:8px; box-shadow:0 0 30px rgba(0,0,0,.6); }
+  #hud { margin-top:10px; display:flex; gap:24px; font-size:16px; }
+  #hud span { color:#ffd84d; font-weight:bold; }
+  #overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,.7); text-align:center; }
+  #overlay h1 { margin:0 0 10px; color:#ffd84d; font-size:38px; }
+  #overlay p { margin:6px 0; font-size:16px; }
+  #overlay button { margin-top:18px; padding:12px 28px; font-size:18px; background:#ffd84d; color:#000; border:none; border-radius:6px; cursor:pointer; font-weight:bold; }
+  #overlay button:hover { background:#ffea8a; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+  <div id="wrapper">
+    <canvas id="game" width="800" height="600"></canvas>
+    <div id="hud">
+      <div>Runde: <span id="lap">0</span> / <span id="totalLaps">3</span></div>
+      <div>Zeit: <span id="time">0.00</span>s</div>
+      <div>Beste Runde: <span id="best">-</span></div>
+      <div>Speed: <span id="speed">0</span></div>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <h1 id="title">Rundkurs-Rennen</h1>
+    <p id="msg">Pfeiltasten oder WASD: Hoch = Gas, Runter = Bremse/Rückwärts, Links/Rechts = Lenken.<br>Bleib auf der Strecke – im Gras wird's langsam!<br>Fahre 3 Runden so schnell wie möglich.</p>
+    <button id="startBtn">Start</button>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const lapEl = document.getElementById('lap');
+  const totalLapsEl = document.getElementById('totalLaps');
+  const timeEl = document.getElementById('time');
+  const bestEl = document.getElementById('best');
+  const speedEl = document.getElementById('speed');
+  const overlay = document.getElementById('overlay');
+  const titleEl = document.getElementById('title');
+  const msgEl = document.getElementById('msg');
+  const btn = document.getElementById('startBtn');
+
+  const TOTAL_LAPS = 3;
+  totalLapsEl.textContent = TOTAL_LAPS;
+
+  // Streckendefinition: Oval mit eingerücktem oberen Teil, gezeichnet als großer Pfad
+  // Außenkante und Innenkante als Ellipsen
+  const track = {
+    cx: W/2, cy: H/2,
+    outerRX: 340, outerRY: 240,
+    innerRX: 180, innerRY: 110,
+  };
+
+  // Start/Ziel-Linie: vertikal an cx, im unteren Bereich der Strecke
+  const finishLine = { x: track.cx, y1: track.cy + track.innerRY, y2: track.cy + track.outerRY };
+
+  // Drei Checkpoints, damit Runde nur zählt, wenn man die ganze Bahn fährt
+  // Wir prüfen Winkelfortschritt um Mittelpunkt
+  const car = {
+    x: track.cx,
+    y: track.cy + (track.innerRY + track.outerRY)/2,
+    angle: -Math.PI/2, // nach oben
+    speed: 0,
+    maxSpeed: 5,
+    accel: 0.08,
+    brake: 0.12,
+    friction: 0.025,
+    turn: 0.045,
+    w: 18, h: 30,
+  };
+
+  let keys = {};
+  let running = false;
+  let startTime = 0;
+  let lap = 0;
+  let bestLap = +localStorage.getItem('rennen.best') || 0;
+  let lapStart = 0;
+  let prevAngleFromCenter = 0;
+  let angleAcc = 0; // akkumulierter Winkel (in rad), wenn >= 2π → Runde
+  let crossedFinish = false;
+  let finished = false;
+
+  if (bestLap > 0) bestEl.textContent = bestLap.toFixed(2);
+
+  function onTrack(x, y) {
+    const dx = x - track.cx, dy = y - track.cy;
+    const outer = (dx*dx)/(track.outerRX*track.outerRX) + (dy*dy)/(track.outerRY*track.outerRY);
+    const inner = (dx*dx)/(track.innerRX*track.innerRX) + (dy*dy)/(track.innerRY*track.innerRY);
+    return outer <= 1 && inner >= 1;
+  }
+
+  function reset() {
+    car.x = track.cx;
+    car.y = track.cy + (track.innerRY + track.outerRY)/2;
+    car.angle = 0; // nach rechts → fährt im Uhrzeigersinn los... wir wollen aber kontrolliert.
+    car.angle = 0;
+    car.speed = 0;
+    lap = 0;
+    angleAcc = 0;
+    prevAngleFromCenter = Math.atan2(car.y - track.cy, car.x - track.cx);
+    crossedFinish = false;
+    finished = false;
+    lapStart = performance.now();
+    startTime = lapStart;
+    lapEl.textContent = lap;
+  }
+
+  function update(dt) {
+    if (finished) return;
+
+    const accelKey = keys['ArrowUp'] || keys['w'] || keys['W'];
+    const brakeKey = keys['ArrowDown'] || keys['s'] || keys['S'];
+    const leftKey  = keys['ArrowLeft'] || keys['a'] || keys['A'];
+    const rightKey = keys['ArrowRight'] || keys['d'] || keys['D'];
+
+    if (accelKey) car.speed = Math.min(car.maxSpeed, car.speed + car.accel);
+    else if (brakeKey) car.speed = Math.max(-car.maxSpeed*0.5, car.speed - car.brake);
+    else {
+      if (car.speed > 0) car.speed = Math.max(0, car.speed - car.friction);
+      else if (car.speed < 0) car.speed = Math.min(0, car.speed + car.friction);
+    }
+
+    // Lenken nur wenn man fährt
+    const turnFactor = Math.min(1, Math.abs(car.speed)/2);
+    if (leftKey)  car.angle -= car.turn * turnFactor * (car.speed >= 0 ? 1 : -1);
+    if (rightKey) car.angle += car.turn * turnFactor * (car.speed >= 0 ? 1 : -1);
+
+    const nx = car.x + Math.cos(car.angle) * car.speed;
+    const ny = car.y + Math.sin(car.angle) * car.speed;
+
+    // Gras-Effekt: außerhalb der Strecke → langsamer
+    const off = !onTrack(nx, ny);
+    if (off) {
+      car.speed *= 0.92;
+    }
+    car.x = nx; car.y = ny;
+
+    // Bildschirm-Grenzen
+    if (car.x < 10) car.x = 10;
+    if (car.x > W-10) car.x = W-10;
+    if (car.y < 10) car.y = 10;
+    if (car.y > H-10) car.y = H-10;
+
+    // Winkel um Mittelpunkt verfolgen für saubere Rundenzählung
+    const a = Math.atan2(car.y - track.cy, car.x - track.cx);
+    let delta = a - prevAngleFromCenter;
+    if (delta > Math.PI) delta -= 2*Math.PI;
+    if (delta < -Math.PI) delta += 2*Math.PI;
+    angleAcc += delta;
+    prevAngleFromCenter = a;
+
+    // Eine Runde gegen den Uhrzeigersinn = -2π (oder im Uhrzeigersinn = +2π)
+    if (Math.abs(angleAcc) >= Math.PI * 2) {
+      const now = performance.now();
+      const lapTime = (now - lapStart) / 1000;
+      lap++;
+      if (bestLap === 0 || lapTime < bestLap) {
+        bestLap = lapTime;
+        localStorage.setItem('rennen.best', bestLap.toFixed(3));
+        bestEl.textContent = bestLap.toFixed(2);
+      }
+      angleAcc = 0;
+      lapStart = now;
+      lapEl.textContent = lap;
+      if (lap >= TOTAL_LAPS) {
+        finished = true;
+        const total = (now - startTime) / 1000;
+        running = false;
+        titleEl.textContent = 'Ziel!';
+        msgEl.innerHTML = `Gesamtzeit: <b>${total.toFixed(2)}s</b><br>Beste Runde: <b>${bestLap.toFixed(2)}s</b>`;
+        btn.textContent = 'Nochmal';
+        overlay.classList.remove('hidden');
+      }
+    }
+
+    timeEl.textContent = ((performance.now() - lapStart)/1000).toFixed(2);
+    speedEl.textContent = Math.abs(Math.round(car.speed * 20));
+  }
+
+  function drawTrack() {
+    // Gras
+    ctx.fillStyle = '#3a8b3a';
+    ctx.fillRect(0,0,W,H);
+
+    // Asphalt (Außenellipse - Innenellipse via even-odd)
+    ctx.fillStyle = '#444';
+    ctx.beginPath();
+    ctx.ellipse(track.cx, track.cy, track.outerRX, track.outerRY, 0, 0, Math.PI*2);
+    ctx.ellipse(track.cx, track.cy, track.innerRX, track.innerRY, 0, 0, Math.PI*2, true);
+    ctx.fill('evenodd');
+
+    // Innen-/Außenkante
+    ctx.strokeStyle = '#ddd';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(track.cx, track.cy, track.outerRX, track.outerRY, 0, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(track.cx, track.cy, track.innerRX, track.innerRY, 0, 0, Math.PI*2);
+    ctx.stroke();
+
+    // Mittellinie (gestrichelt)
+    ctx.save();
+    ctx.setLineDash([12, 14]);
+    ctx.strokeStyle = '#ffd84d';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(track.cx, track.cy, (track.outerRX+track.innerRX)/2, (track.outerRY+track.innerRY)/2, 0, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+
+    // Start/Ziel - Karomuster
+    const segs = 8;
+    const segH = (finishLine.y2 - finishLine.y1)/segs;
+    for (let i = 0; i < segs; i++) {
+      ctx.fillStyle = i % 2 === 0 ? '#fff' : '#000';
+      ctx.fillRect(finishLine.x - 12, finishLine.y1 + i*segH, 24, segH);
+    }
+  }
+
+  function drawCar() {
+    ctx.save();
+    ctx.translate(car.x, car.y);
+    ctx.rotate(car.angle + Math.PI/2);
+    // Karosserie
+    ctx.fillStyle = '#e74c3c';
+    ctx.fillRect(-car.w/2, -car.h/2, car.w, car.h);
+    // Fenster
+    ctx.fillStyle = '#1c1c2c';
+    ctx.fillRect(-car.w/2 + 3, -car.h/2 + 5, car.w - 6, 9);
+    ctx.fillRect(-car.w/2 + 3, car.h/2 - 12, car.w - 6, 7);
+    // Räder
+    ctx.fillStyle = '#000';
+    ctx.fillRect(-car.w/2 - 2, -car.h/2 + 4, 3, 7);
+    ctx.fillRect(car.w/2 - 1, -car.h/2 + 4, 3, 7);
+    ctx.fillRect(-car.w/2 - 2, car.h/2 - 11, 3, 7);
+    ctx.fillRect(car.w/2 - 1, car.h/2 - 11, 3, 7);
+    // Scheinwerfer (vorne = oben)
+    ctx.fillStyle = '#fff7a8';
+    ctx.fillRect(-car.w/2 + 2, -car.h/2, 4, 3);
+    ctx.fillRect(car.w/2 - 6, -car.h/2, 4, 3);
+    ctx.restore();
+  }
+
+  function draw() {
+    drawTrack();
+    drawCar();
+  }
+
+  let last = 0;
+  function loop(ts) {
+    if (!running) return;
+    const dt = ts - last;
+    last = ts;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function start() {
+    reset();
+    running = true;
+    overlay.classList.add('hidden');
+    last = performance.now();
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('keydown', e => {
+    keys[e.key] = true;
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+  btn.addEventListener('click', start);
+})();
+</script>
+</body>
+</html>

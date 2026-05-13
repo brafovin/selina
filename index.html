@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Autorennen</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #0a0a14;
+    font-family: Arial, sans-serif;
+    color: #fff;
+    overflow: hidden;
+  }
+  #wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+  }
+  #game {
+    background: #1a3a1a;
+    border: 4px solid #444;
+    border-radius: 8px;
+    box-shadow: 0 0 40px rgba(255, 80, 80, 0.25), 0 0 80px rgba(80, 120, 255, 0.15);
+  }
+  #hud {
+    margin-top: 12px;
+    font-size: 18px;
+    display: flex;
+    gap: 30px;
+    text-shadow: 0 0 8px rgba(255, 216, 77, 0.4);
+  }
+  #hud span { color: #ffd84d; font-weight: bold; }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(40,0,0,0.85) 0%, rgba(0,0,0,0.95) 100%);
+    text-align: center;
+  }
+  #overlay h1 {
+    margin: 0 0 10px;
+    font-size: 52px;
+    color: #ffd84d;
+    text-shadow: 0 0 20px rgba(255,80,80,0.8), 0 0 40px rgba(255,200,0,0.5);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { transform: scale(1); }
+    50%     { transform: scale(1.06); }
+  }
+  #overlay p  { margin: 6px 0; font-size: 18px; }
+  #overlay button {
+    margin-top: 18px;
+    padding: 14px 34px;
+    font-size: 20px;
+    background: linear-gradient(180deg, #ffe87a 0%, #ffb70a 100%);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    box-shadow: 0 6px 0 #b07700, 0 10px 24px rgba(255,180,0,0.4);
+    transition: transform .1s, box-shadow .1s;
+  }
+  #overlay button:hover { transform: translateY(-2px); box-shadow: 0 8px 0 #b07700, 0 14px 28px rgba(255,180,0,0.5); }
+  #overlay button:active { transform: translateY(3px); box-shadow: 0 3px 0 #b07700, 0 4px 10px rgba(255,180,0,0.3); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div id="wrapper">
+    <canvas id="game" width="400" height="600"></canvas>
+    <div id="hud">
+      <div>Punkte: <span id="score">0</span></div>
+      <div>Highscore: <span id="hi">0</span></div>
+      <div>Speed: <span id="speed">0</span> km/h</div>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <h1 id="title">Autorennen</h1>
+    <p id="msg">Steuere mit den Pfeiltasten (oder A/D, W/S).<br>Weiche dem Gegenverkehr aus!</p>
+    <p style="opacity:.7">Leertaste = Pause</p>
+    <button id="startBtn">Start</button>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const scoreEl = document.getElementById('score');
+  const hiEl    = document.getElementById('hi');
+  const speedEl = document.getElementById('speed');
+  const overlay = document.getElementById('overlay');
+  const titleEl = document.getElementById('title');
+  const msgEl   = document.getElementById('msg');
+  const btn     = document.getElementById('startBtn');
+
+  const LANES = 3;
+  const ROAD_LEFT = 60;
+  const ROAD_RIGHT = W - 60;
+  const ROAD_W = ROAD_RIGHT - ROAD_LEFT;
+  const LANE_W = ROAD_W / LANES;
+
+  const player = {
+    w: 40, h: 70,
+    x: W/2 - 20,
+    y: H - 110,
+    vx: 0,
+    tilt: 0,           // visuelle Karosserie-Neigung
+    speed: 0,
+    maxSpeed: 12,
+    accel: 0.12,
+    friction: 0.06,
+    lateral: 5,
+  };
+
+  let enemies = [];
+  let stripes = [];
+  let scenery = [];     // animierte Bäume/Büsche am Straßenrand
+  let particles = [];   // Auspuff, Reifenqualm, Funken
+  let speedLines = [];  // Speed-Effekt auf dem Asphalt
+  let keys = {};
+  let score = 0;
+  let hi = +localStorage.getItem('autorennen.hi') || 0;
+  let running = false;
+  let paused = false;
+  let gameOverFlag = false;
+  let spawnTimer = 0;
+  let spawnInterval = 70;
+  let shake = 0;
+  let flash = 0;
+  let frame = 0;
+
+  hiEl.textContent = hi;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function reset() {
+    enemies = [];
+    stripes = [];
+    particles = [];
+    speedLines = [];
+    scenery = [];
+    for (let i = 0; i < 12; i++) stripes.push(i * 60);
+    for (let i = 0; i < 14; i++) {
+      scenery.push({
+        x: Math.random() < 0.5 ? rand(5, ROAD_LEFT - 20) : rand(ROAD_RIGHT + 20, W - 5),
+        y: rand(-H, H),
+        size: rand(10, 22),
+        type: Math.random() < 0.5 ? 'tree' : 'bush',
+        hue: rand(85, 130),
+      });
+    }
+    player.x = W/2 - player.w/2;
+    player.vx = 0;
+    player.tilt = 0;
+    player.speed = 4;
+    score = 0;
+    spawnTimer = 0;
+    spawnInterval = 70;
+    shake = 0;
+    flash = 0;
+    gameOverFlag = false;
+  }
+
+  function laneX(i) {
+    return ROAD_LEFT + i * LANE_W + LANE_W/2;
+  }
+
+  function spawnEnemy() {
+    const lane = Math.floor(Math.random() * LANES);
+    const colors = ['#e74c3c', '#3498db', '#9b59b6', '#f39c12', '#1abc9c'];
+    enemies.push({
+      x: laneX(lane) - 20,
+      y: -80,
+      w: 40, h: 70,
+      vy: 2 + Math.random() * 2,
+      color: colors[Math.floor(Math.random()*colors.length)],
+      wobble: Math.random() * Math.PI * 2,
+    });
+  }
+
+  function rectsHit(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x &&
+           a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function emitExhaust() {
+    // Zwei kleine Auspuffwolken hinten links/rechts
+    for (const sx of [player.x + 8, player.x + player.w - 8]) {
+      particles.push({
+        x: sx + rand(-2, 2),
+        y: player.y + player.h + rand(-2, 4),
+        vx: rand(-0.4, 0.4),
+        vy: rand(0.5, 1.8),
+        life: 24,
+        max: 24,
+        r: rand(3, 6),
+        type: 'smoke',
+        hue: 220,
+        bright: 75,
+      });
+    }
+  }
+
+  function emitTireSmoke() {
+    // Beim harten Lenken Qualm an den Hinterrädern
+    for (const sx of [player.x - 2, player.x + player.w + 2]) {
+      particles.push({
+        x: sx,
+        y: player.y + player.h - 14 + rand(-4, 4),
+        vx: rand(-1, 1) - player.vx * 0.4,
+        vy: rand(0.2, 1),
+        life: 30,
+        max: 30,
+        r: rand(4, 7),
+        type: 'smoke',
+        hue: 0,
+        bright: 90,
+      });
+    }
+  }
+
+  function explode(x, y) {
+    for (let i = 0; i < 50; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const sp = rand(2, 8);
+      particles.push({
+        x, y,
+        vx: Math.cos(ang) * sp,
+        vy: Math.sin(ang) * sp - rand(0, 2),
+        life: rand(30, 60),
+        max: 60,
+        r: rand(2, 5),
+        type: 'spark',
+        hue: rand(0, 50),
+        bright: 60,
+      });
+    }
+    for (let i = 0; i < 25; i++) {
+      particles.push({
+        x: x + rand(-15, 15),
+        y: y + rand(-15, 15),
+        vx: rand(-2, 2),
+        vy: rand(-3, -0.5),
+        life: 50,
+        max: 50,
+        r: rand(8, 16),
+        type: 'smoke',
+        hue: 30,
+        bright: 30,
+      });
+    }
+    shake = 22;
+    flash = 1;
+  }
+
+  function update() {
+    frame++;
+
+    // Steuerung
+    const left  = keys['ArrowLeft']  || keys['a'] || keys['A'];
+    const right = keys['ArrowRight'] || keys['d'] || keys['D'];
+    const up    = keys['ArrowUp']    || keys['w'] || keys['W'];
+    const down  = keys['ArrowDown']  || keys['s'] || keys['S'];
+
+    // Sanftere Querbewegung mit Beschleunigung statt fixem Step
+    const lateralAccel = 0.9;
+    if (left)  player.vx -= lateralAccel;
+    if (right) player.vx += lateralAccel;
+    if (!left && !right) player.vx *= 0.8;
+    player.vx = Math.max(-6, Math.min(6, player.vx));
+    player.x += player.vx;
+
+    // Karosserie-Neigung folgt seitlicher Geschwindigkeit
+    player.tilt += (player.vx * 0.06 - player.tilt) * 0.25;
+
+    if (up) player.speed = Math.min(player.maxSpeed, player.speed + player.accel);
+    else if (down) player.speed = Math.max(1.5, player.speed - player.accel*1.5);
+    else player.speed = Math.max(3, player.speed - player.friction);
+
+    // Auf der Straße bleiben
+    if (player.x < ROAD_LEFT + 5) { player.x = ROAD_LEFT + 5; player.vx = 0; }
+    if (player.x + player.w > ROAD_RIGHT - 5) { player.x = ROAD_RIGHT - 5 - player.w; player.vx = 0; }
+
+    // Mittelstreifen
+    for (let i = 0; i < stripes.length; i++) {
+      stripes[i] += player.speed;
+      if (stripes[i] > H) stripes[i] -= H + 40;
+    }
+
+    // Szenerie scrollt mit
+    for (const s of scenery) {
+      s.y += player.speed * 0.95;
+      if (s.y > H + 20) {
+        s.y = -rand(20, 80);
+        s.x = Math.random() < 0.5 ? rand(5, ROAD_LEFT - 20) : rand(ROAD_RIGHT + 20, W - 5);
+        s.size = rand(10, 22);
+        s.type = Math.random() < 0.5 ? 'tree' : 'bush';
+        s.hue = rand(85, 130);
+      }
+    }
+
+    // Speed-Lines auf dem Asphalt
+    if (player.speed > 6 && Math.random() < (player.speed - 6) / 12) {
+      speedLines.push({
+        x: rand(ROAD_LEFT + 10, ROAD_RIGHT - 10),
+        y: -10,
+        len: rand(14, 28),
+        life: 40,
+      });
+    }
+    for (const sl of speedLines) {
+      sl.y += player.speed * 1.8;
+      sl.life--;
+    }
+    speedLines = speedLines.filter(s => s.life > 0 && s.y < H + 20);
+
+    // Partikel (Auspuff / Qualm / Funken)
+    if (frame % 3 === 0) emitExhaust();
+    if ((left || right) && Math.abs(player.vx) > 3) emitTireSmoke();
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy + (p.type === 'smoke' ? player.speed * 0.4 : 0);
+      if (p.type === 'spark') {
+        p.vy += 0.18; // Gravitation für Funken
+      }
+      p.life--;
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    // Gegner bewegen + leichtes Schlingern
+    for (const e of enemies) {
+      e.y += player.speed + e.vy;
+      e.wobble += 0.1;
+    }
+    enemies = enemies.filter(e => e.y < H + 100);
+
+    // Spawn
+    spawnTimer++;
+    if (spawnTimer >= spawnInterval) {
+      spawnTimer = 0;
+      spawnEnemy();
+      if (Math.random() < 0.25) {
+        const lane = Math.floor(Math.random() * LANES);
+        enemies.push({
+          x: laneX(lane) - 20,
+          y: -160,
+          w: 40, h: 70,
+          vy: 1 + Math.random()*2,
+          color: '#e67e22',
+          wobble: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+
+    // Kollisionen
+    for (const e of enemies) {
+      if (rectsHit(player, e)) {
+        explode(player.x + player.w/2, player.y + player.h/2);
+        gameOver();
+        return;
+      }
+    }
+
+    // Score
+    score += player.speed * 0.1;
+    scoreEl.textContent = Math.floor(score);
+    speedEl.textContent = Math.floor(player.speed * 18);
+
+    // Schwierigkeit steigern
+    if (Math.floor(score) > 0 && Math.floor(score) % 200 === 0) {
+      if (spawnInterval > 25) spawnInterval = Math.max(25, 70 - Math.floor(score/200) * 3);
+      player.maxSpeed = Math.min(20, 12 + Math.floor(score/300));
+    }
+
+    // Effekte abklingen
+    if (shake > 0) shake *= 0.85;
+    if (flash > 0) flash = Math.max(0, flash - 0.04);
+  }
+
+  function drawScenery() {
+    for (const s of scenery) {
+      if (s.type === 'tree') {
+        // Stamm
+        ctx.fillStyle = '#5a3320';
+        ctx.fillRect(s.x - 2, s.y, 4, s.size * 0.6);
+        // Krone (drei Kreise für lockereren Look)
+        ctx.fillStyle = `hsl(${s.hue|0} 55% 28%)`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y - 2, s.size * 0.6, 0, Math.PI*2);
+        ctx.arc(s.x - s.size*0.4, s.y + 2, s.size * 0.45, 0, Math.PI*2);
+        ctx.arc(s.x + s.size*0.4, s.y + 2, s.size * 0.45, 0, Math.PI*2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = `hsl(${s.hue|0} 50% 35%)`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size * 0.5, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawRoad() {
+    // Gras-Verlauf
+    const grass = ctx.createLinearGradient(0, 0, W, 0);
+    grass.addColorStop(0,    '#1a3a1a');
+    grass.addColorStop(0.5,  '#2a6a2a');
+    grass.addColorStop(1,    '#1a3a1a');
+    ctx.fillStyle = grass;
+    ctx.fillRect(0, 0, W, H);
+
+    drawScenery();
+
+    // Straße mit leichtem Verlauf für Tiefe
+    const asphalt = ctx.createLinearGradient(ROAD_LEFT, 0, ROAD_RIGHT, 0);
+    asphalt.addColorStop(0,   '#2a2a2a');
+    asphalt.addColorStop(0.5, '#3c3c3c');
+    asphalt.addColorStop(1,   '#2a2a2a');
+    ctx.fillStyle = asphalt;
+    ctx.fillRect(ROAD_LEFT, 0, ROAD_W, H);
+
+    // Randstreifen
+    ctx.fillStyle = '#ffd84d';
+    ctx.fillRect(ROAD_LEFT - 6, 0, 4, H);
+    ctx.fillRect(ROAD_RIGHT + 2, 0, 4, H);
+    // dezenter schwarz-weiß Randstreifen
+    for (let y = 0; y < H; y += 30) {
+      const off = (frame * player.speed) % 60;
+      const yy = (y - off + H) % H;
+      ctx.fillStyle = (((y/30)|0) + ((frame/3)|0)) % 2 === 0 ? '#bb1010' : '#fff';
+      ctx.fillRect(ROAD_LEFT - 10, yy, 4, 14);
+      ctx.fillRect(ROAD_RIGHT + 6, yy, 4, 14);
+    }
+
+    // Spurmarkierungen
+    ctx.fillStyle = '#fff';
+    for (let lane = 1; lane < LANES; lane++) {
+      const x = ROAD_LEFT + lane * LANE_W - 2;
+      for (const s of stripes) {
+        ctx.fillRect(x, s, 4, 30);
+      }
+    }
+
+    // Speed-Lines auf Asphalt
+    for (const sl of speedLines) {
+      const a = Math.min(1, sl.life / 40);
+      ctx.fillStyle = `rgba(255,255,255,${0.15 * a})`;
+      ctx.fillRect(sl.x, sl.y, 2, sl.len);
+    }
+  }
+
+  function drawCar(x, y, w, h, color, tilt = 0, isPlayer = false) {
+    ctx.save();
+    ctx.translate(x + w/2, y + h/2);
+    ctx.rotate(tilt);
+    ctx.translate(-(x + w/2), -(y + h/2));
+
+    // Schatten
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(x + 3, y + 5, w, h);
+
+    // Karosserie mit Verlauf
+    const body = ctx.createLinearGradient(x, y, x + w, y);
+    body.addColorStop(0, color);
+    body.addColorStop(0.5, shade(color, 25));
+    body.addColorStop(1, shade(color, -20));
+    ctx.fillStyle = body;
+    ctx.fillRect(x, y, w, h);
+
+    // Highlight-Streifen
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(x + 4, y + 2, w - 8, 2);
+
+    // Fenster
+    ctx.fillStyle = '#1c1c2c';
+    ctx.fillRect(x + 4, y + 10, w - 8, 18);
+    ctx.fillRect(x + 4, y + h - 28, w - 8, 14);
+    // Fenster-Glanz
+    ctx.fillStyle = 'rgba(180,220,255,0.25)';
+    ctx.fillRect(x + 6, y + 11, 8, 14);
+
+    // Räder
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x - 3, y + 8, 5, 14);
+    ctx.fillRect(x + w - 2, y + 8, 5, 14);
+    ctx.fillRect(x - 3, y + h - 22, 5, 14);
+    ctx.fillRect(x + w - 2, y + h - 22, 5, 14);
+
+    // Scheinwerfer mit Glow
+    if (isPlayer) {
+      ctx.fillStyle = '#fff7a8';
+      ctx.fillRect(x + 4, y + 2, 8, 4);
+      ctx.fillRect(x + w - 12, y + 2, 8, 4);
+    } else {
+      // Rücklichter (Gegner kommen entgegen → vorne ist unten)
+      ctx.fillStyle = '#ff3030';
+      ctx.fillRect(x + 4, y + h - 4, 8, 3);
+      ctx.fillRect(x + w - 12, y + h - 4, 8, 3);
+      const g = ctx.createRadialGradient(x + w/2, y + h, 1, x + w/2, y + h, 14);
+      g.addColorStop(0, 'rgba(255,40,40,0.5)');
+      g.addColorStop(1, 'rgba(255,40,40,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 10, y + h - 10, w + 20, 20);
+    }
+    ctx.restore();
+  }
+
+  function shade(hex, percent) {
+    // hex (#rrggbb) heller (>0) oder dunkler (<0)
+    const m = hex.match(/^#([0-9a-f]{6})$/i);
+    if (!m) return hex;
+    let r = parseInt(m[1].slice(0,2),16);
+    let g = parseInt(m[1].slice(2,4),16);
+    let b = parseInt(m[1].slice(4,6),16);
+    const f = percent / 100;
+    r = Math.max(0, Math.min(255, r + (f >= 0 ? (255-r)*f : r*f)));
+    g = Math.max(0, Math.min(255, g + (f >= 0 ? (255-g)*f : g*f)));
+    b = Math.max(0, Math.min(255, b + (f >= 0 ? (255-b)*f : b*f)));
+    return '#' + [r,g,b].map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      const a = p.life / p.max;
+      if (p.type === 'smoke') {
+        ctx.fillStyle = `hsla(${p.hue}, 8%, ${p.bright}%, ${0.55 * a})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * (1 + (1-a) * 1.4), 0, Math.PI*2);
+        ctx.fill();
+      } else { // spark
+        ctx.fillStyle = `hsla(${p.hue}, 100%, ${p.bright + a*30}%, ${a})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * a, 0, Math.PI*2);
+        ctx.fill();
+        // kleiner Glow
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 4);
+        g.addColorStop(0, `hsla(${p.hue}, 100%, 70%, ${0.4 * a})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * 4, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function draw() {
+    ctx.save();
+    if (shake > 0.2) {
+      ctx.translate(rand(-shake, shake), rand(-shake, shake));
+    }
+
+    drawRoad();
+
+    // Gegner
+    for (const e of enemies) {
+      const wob = Math.sin(e.wobble) * 1.5;
+      drawCar(e.x + wob, e.y, e.w, e.h, e.color, 0, false);
+    }
+
+    // Auspuff/Qualm hinter dem Spieler zeichnen (vor dem Auto)
+    drawParticles();
+
+    // Spieler – nur zeichnen wenn nicht explodiert
+    if (!gameOverFlag) {
+      drawCar(player.x, player.y, player.w, player.h, '#e8e8e8', player.tilt, true);
+    }
+
+    // Vignette
+    const vg = ctx.createRadialGradient(W/2, H/2, H*0.35, W/2, H/2, H*0.75);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.restore();
+
+    // Flash (über allem)
+    if (flash > 0.01) {
+      ctx.fillStyle = `rgba(255, 220, 120, ${flash})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  function loop() {
+    if (!running && !gameOverFlag) return;
+    if (!paused) {
+      if (!gameOverFlag) update();
+      else {
+        // Nach Crash: nur noch Partikel weiterlaufen lassen
+        for (const p of particles) {
+          p.x += p.vx;
+          p.y += p.vy;
+          if (p.type === 'spark') p.vy += 0.18;
+          p.life--;
+        }
+        particles = particles.filter(p => p.life > 0);
+        if (shake > 0) shake *= 0.85;
+        if (flash > 0) flash = Math.max(0, flash - 0.04);
+      }
+      draw();
+    } else {
+      draw();
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#ffd84d';
+      ctx.font = 'bold 36px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('PAUSE', W/2, H/2);
+      ctx.textAlign = 'left';
+    }
+    requestAnimationFrame(loop);
+  }
+
+  function start() {
+    reset();
+    running = true;
+    paused = false;
+    overlay.classList.add('hidden');
+    requestAnimationFrame(loop);
+  }
+
+  function gameOver() {
+    running = false;
+    gameOverFlag = true;
+    if (score > hi) {
+      hi = Math.floor(score);
+      localStorage.setItem('autorennen.hi', hi);
+      hiEl.textContent = hi;
+    }
+    // Overlay verzögert einblenden, damit man die Explosion sieht
+    setTimeout(() => {
+      titleEl.textContent = 'Crash!';
+      msgEl.innerHTML = `Du hast <b>${Math.floor(score)}</b> Punkte erreicht.<br>Highscore: <b>${hi}</b>`;
+      btn.textContent = 'Nochmal';
+      overlay.classList.remove('hidden');
+      gameOverFlag = false;
+    }, 1200);
+  }
+
+  window.addEventListener('keydown', e => {
+    keys[e.key] = true;
+    if (e.key === ' ' && running) {
+      paused = !paused;
+      e.preventDefault();
+    }
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+  btn.addEventListener('click', start);
+})();
+</script>
+</body>
+</html>
