@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Super Selina Kart</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    color: #fff;
+    font-family: "Courier New", monospace;
+    overflow: hidden;
+    height: 100%;
+    user-select: none;
+  }
+  #wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    background: #000;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    box-shadow: 0 0 30px #000;
+    max-width: 100vw;
+    max-height: 100vh;
+  }
+  #hud {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-size: 18px;
+    text-shadow: 2px 2px 0 #000;
+    pointer-events: none;
+  }
+  #title {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    z-index: 10;
+  }
+  #title h1 {
+    font-size: 48px;
+    color: #ffcc00;
+    text-shadow: 4px 4px 0 #d40000, 6px 6px 0 #000;
+    margin: 0 0 8px;
+    letter-spacing: 2px;
+  }
+  #title p { margin: 6px 0; font-size: 16px; }
+  #title button {
+    margin-top: 18px;
+    font-family: inherit;
+    font-size: 22px;
+    padding: 10px 26px;
+    background: #ffcc00;
+    color: #000;
+    border: 4px solid #fff;
+    cursor: pointer;
+  }
+  #title button:hover { background: #fff; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="640" height="480"></canvas>
+  </div>
+  <div id="hud"></div>
+  <div id="title">
+    <h1>SUPER SELINA KART</h1>
+    <p>Pfeiltasten: Lenken / Gas / Bremse</p>
+    <p>Leertaste: Hupe &nbsp; • &nbsp; Shift: Drift</p>
+    <p>3 Runden — schlag die Gegner!</p>
+    <button id="startBtn">START</button>
+  </div>
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const hud = document.getElementById("hud");
+  const titleEl = document.getElementById("title");
+  const startBtn = document.getElementById("startBtn");
+
+  // ---- Track map (Mode-7 style top-down bitmap) ----
+  // Letters: G=grass, R=road, S=start/finish, W=wall, C=checkpoint(road)
+  const MAP = [
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGRRRRRRRRRRRRRRRRRRRRRRRRRRGGG",
+    "GGRRRRRRRRRRRRRRRRRRRRRRRRRRRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRSSSSSSSSSSSSSSSSSSSSSSSSRRGG",
+    "GGRRRRRRRRRRRRRRRRRRRRRRRRRRRRGG",
+    "GGGRRRRRRRRRRRRRRRRRRRRRRRRRRGGG",
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+  ];
+  const MAP_W = MAP[0].length;
+  const MAP_H = MAP.length;
+  const TILE = 64; // world units per tile
+
+  function tileAt(wx, wy) {
+    const tx = Math.floor(wx / TILE);
+    const ty = Math.floor(wy / TILE);
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return "G";
+    return MAP[ty][tx];
+  }
+  function isRoad(c) { return c === "R" || c === "S" || c === "C"; }
+
+  // ---- Build a tile texture image (Mode-7 source) ----
+  // We render the whole map into an offscreen canvas at high res, then sample it for Mode-7.
+  const TEX_TILE = 32; // pixels per tile in the source texture
+  const tex = document.createElement("canvas");
+  tex.width = MAP_W * TEX_TILE;
+  tex.height = MAP_H * TEX_TILE;
+  const tctx = tex.getContext("2d");
+
+  function drawTileTex() {
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        const c = MAP[y][x];
+        const px = x * TEX_TILE, py = y * TEX_TILE;
+        if (c === "G") {
+          // grass with checker
+          tctx.fillStyle = "#1f9c2e";
+          tctx.fillRect(px, py, TEX_TILE, TEX_TILE);
+          tctx.fillStyle = "#178a26";
+          for (let yy = 0; yy < TEX_TILE; yy += 8)
+            for (let xx = 0; xx < TEX_TILE; xx += 8)
+              if (((xx + yy) >> 3) & 1)
+                tctx.fillRect(px + xx, py + yy, 8, 8);
+        } else if (c === "R") {
+          tctx.fillStyle = "#5a4a3a";
+          tctx.fillRect(px, py, TEX_TILE, TEX_TILE);
+          tctx.fillStyle = "#6b5848";
+          tctx.fillRect(px, py, TEX_TILE, TEX_TILE / 2);
+        } else if (c === "S") {
+          // start/finish: black & white checker
+          for (let yy = 0; yy < TEX_TILE; yy += 4)
+            for (let xx = 0; xx < TEX_TILE; xx += 4) {
+              tctx.fillStyle = (((xx + yy) >> 2) & 1) ? "#fff" : "#000";
+              tctx.fillRect(px + xx, py + yy, 4, 4);
+            }
+        }
+      }
+    }
+    // road borders
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        const c = MAP[y][x];
+        if (!isRoad(c)) continue;
+        const px = x * TEX_TILE, py = y * TEX_TILE;
+        const neighbors = [
+          [0,-1],[0,1],[-1,0],[1,0],
+        ];
+        for (const [dx,dy] of neighbors) {
+          const nx = x+dx, ny = y+dy;
+          if (nx<0||ny<0||nx>=MAP_W||ny>=MAP_H) continue;
+          if (!isRoad(MAP[ny][nx])) {
+            // draw red/white curb stripe
+            tctx.save();
+            for (let i = 0; i < TEX_TILE; i += 8) {
+              tctx.fillStyle = (i & 8) ? "#ff2020" : "#ffffff";
+              if (dy === -1) tctx.fillRect(px+i, py, 8, 4);
+              if (dy ===  1) tctx.fillRect(px+i, py+TEX_TILE-4, 8, 4);
+              if (dx === -1) tctx.fillRect(px, py+i, 4, 8);
+              if (dx ===  1) tctx.fillRect(px+TEX_TILE-4, py+i, 4, 8);
+            }
+            tctx.restore();
+          }
+        }
+      }
+    }
+  }
+  drawTileTex();
+
+  // ---- Pre-extract texture pixels for fast Mode-7 ----
+  const texData = tctx.getImageData(0, 0, tex.width, tex.height).data;
+
+  // ---- Karts ----
+  const startX = 4 * TILE + TILE/2;
+  const startY = 25 * TILE + TILE/2;
+  function makeKart(color, isPlayer) {
+    return {
+      x: startX,
+      y: startY,
+      angle: -Math.PI/2, // facing up
+      speed: 0,
+      color,
+      isPlayer: !!isPlayer,
+      lap: 0,
+      checkpoint: 0,
+      lastSide: 1,
+      sprite: null,
+    };
+  }
+  const player = makeKart("#e02020", true);
+  const cpus = [
+    makeKart("#ffd92e", false),
+    makeKart("#3aa3ff", false),
+    makeKart("#7cd24a", false),
+  ];
+  // stagger starting positions
+  player.y = startY - 6;
+  cpus[0].x = startX + 28; cpus[0].y = startY + 12;
+  cpus[1].x = startX - 28; cpus[1].y = startY + 12;
+  cpus[2].x = startX;      cpus[2].y = startY + 28;
+
+  // ---- Kart sprites (drawn procedurally) ----
+  function makeKartSprite(color) {
+    const c = document.createElement("canvas");
+    c.width = 48; c.height = 40;
+    const g = c.getContext("2d");
+    // shadow
+    g.fillStyle = "rgba(0,0,0,0.35)";
+    g.beginPath(); g.ellipse(24, 36, 18, 4, 0, 0, Math.PI*2); g.fill();
+    // body
+    g.fillStyle = color;
+    g.fillRect(10, 14, 28, 18);
+    g.fillStyle = "#222";
+    g.fillRect(8, 28, 6, 8);
+    g.fillRect(34, 28, 6, 8);
+    g.fillRect(8, 12, 6, 8);
+    g.fillRect(34, 12, 6, 8);
+    // driver
+    g.fillStyle = "#ffd1a4";
+    g.fillRect(18, 6, 12, 10);
+    g.fillStyle = "#fff";
+    g.fillRect(16, 2, 16, 6);
+    g.fillStyle = "#000";
+    g.fillRect(20, 9, 2, 2);
+    g.fillRect(26, 9, 2, 2);
+    // windshield strip
+    g.fillStyle = "rgba(120,200,255,0.7)";
+    g.fillRect(14, 16, 20, 4);
+    return c;
+  }
+  player.sprite = makeKartSprite(player.color);
+  cpus.forEach(k => k.sprite = makeKartSprite(k.color));
+
+  // ---- Input ----
+  const keys = {};
+  addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase())) e.preventDefault(); });
+  addEventListener("keyup",   e => { keys[e.key.toLowerCase()] = false; });
+
+  // ---- Audio (simple WebAudio beeps) ----
+  let actx = null;
+  function beep(freq, dur=0.08, type="square", vol=0.05) {
+    if (!actx) return;
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.value = vol;
+    o.connect(g); g.connect(actx.destination);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+    o.stop(actx.currentTime + dur + 0.02);
+  }
+
+  // ---- Game state ----
+  let running = false;
+  let totalLaps = 3;
+  let raceStart = 0;
+  let countdown = 3;
+  let countdownTimer = 0;
+  let finished = false;
+  let finishOrder = [];
+  let bgOffset = 0;
+
+  function startRace() {
+    running = true;
+    countdown = 3;
+    countdownTimer = performance.now();
+    raceStart = 0;
+    finished = false;
+    finishOrder = [];
+    if (!actx) {
+      try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){}
+    }
+  }
+
+  startBtn.addEventListener("click", () => {
+    titleEl.classList.add("hidden");
+    startRace();
+  });
+
+  // ---- Physics ----
+  function stepKart(k, steerInput, throttle, brake, drift, dt) {
+    const onRoad = isRoad(tileAt(k.x, k.y));
+    const maxSpeed = onRoad ? 320 : 140;
+    const accel = onRoad ? 220 : 90;
+    const decel = 300;
+    const friction = onRoad ? 60 : 180;
+
+    if (throttle) k.speed += accel * dt;
+    if (brake)    k.speed -= decel * dt;
+    // friction
+    if (!throttle && !brake) {
+      if (k.speed > 0) k.speed = Math.max(0, k.speed - friction*dt);
+      else if (k.speed < 0) k.speed = Math.min(0, k.speed + friction*dt);
+    }
+    k.speed = Math.max(-120, Math.min(maxSpeed, k.speed));
+
+    const steerRate = drift ? 3.2 : 2.2;
+    k.angle += steerInput * steerRate * dt * (Math.abs(k.speed) / 200 + 0.3);
+
+    const nx = k.x + Math.cos(k.angle) * k.speed * dt;
+    const ny = k.y + Math.sin(k.angle) * k.speed * dt;
+
+    // wall = map edges only; off-road just slows
+    if (nx > TILE && nx < (MAP_W-1)*TILE) k.x = nx;
+    else k.speed *= 0.5;
+    if (ny > TILE && ny < (MAP_H-1)*TILE) k.y = ny;
+    else k.speed *= 0.5;
+  }
+
+  // Simple AI: follow waypoints around the outer loop
+  const waypoints = [
+    {x: 4*TILE+TILE/2,  y: 25*TILE+TILE/2},
+    {x: 4*TILE+TILE/2,  y: 4*TILE+TILE/2},
+    {x: 27*TILE+TILE/2, y: 4*TILE+TILE/2},
+    {x: 27*TILE+TILE/2, y: 25*TILE+TILE/2},
+  ];
+  function aiStep(k, dt) {
+    if (!k.wp) k.wp = 1;
+    const target = waypoints[k.wp];
+    const dx = target.x - k.x, dy = target.y - k.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < TILE * 1.2) k.wp = (k.wp + 1) % waypoints.length;
+    const desired = Math.atan2(dy, dx);
+    let diff = desired - k.angle;
+    while (diff > Math.PI) diff -= Math.PI*2;
+    while (diff < -Math.PI) diff += Math.PI*2;
+    const steer = Math.max(-1, Math.min(1, diff * 2));
+    stepKart(k, steer, true, false, Math.abs(diff) > 0.6, dt);
+  }
+
+  // ---- Lap tracking ----
+  // Player crosses S row going UP from y>26*TILE to y<25*TILE => +1 lap
+  function trackLap(k) {
+    const ty = Math.floor(k.y / TILE);
+    const tx = Math.floor(k.x / TILE);
+    // Checkpoint at top of map
+    if (ty <= 4 && tx >= 4 && tx <= 27) k.passedTop = true;
+    // Finish line crossing
+    if (k.passedTop && ty >= 25 && ty <= 26 && tx >= 4 && tx <= 27) {
+      k.lap += 1;
+      k.passedTop = false;
+      if (k.isPlayer) beep(880, 0.2, "square", 0.08);
+      if (k.lap >= totalLaps && !finishOrder.includes(k)) {
+        finishOrder.push(k);
+        if (k.isPlayer) finished = true;
+      }
+    }
+  }
+
+  // ---- Mode-7 renderer ----
+  function renderMode7() {
+    // Sky / background
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, H/2);
+    skyGrad.addColorStop(0, "#3aa6ff");
+    skyGrad.addColorStop(1, "#cbe9ff");
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H/2);
+
+    // Distant mountains
+    ctx.fillStyle = "#5a7a2a";
+    ctx.beginPath();
+    ctx.moveTo(0, H/2);
+    const baseY = H/2;
+    for (let i = 0; i <= 12; i++) {
+      const x = (i / 12) * W;
+      const peakOffset = ((i * 73 + (bgOffset|0)) % 200) - 100;
+      ctx.lineTo(x, baseY - 40 - Math.abs(peakOffset)/3);
+      ctx.lineTo(x + W/24, baseY);
+    }
+    ctx.lineTo(W, H/2);
+    ctx.closePath();
+    ctx.fill();
+
+    // Mode-7 floor
+    const img = ctx.createImageData(W, H/2);
+    const data = img.data;
+    const cosA = Math.cos(player.angle + Math.PI/2);
+    const sinA = Math.sin(player.angle + Math.PI/2);
+    const horizon = 0;
+    const camHeight = 80;
+    const fov = 250;
+    const camX = player.x;
+    const camY = player.y;
+
+    for (let y = 0; y < H/2; y++) {
+      const screenY = y + 1;
+      const z = (camHeight * fov) / screenY;
+      const fog = Math.max(0, 1 - screenY / (H/2));
+      const fr = 1 - fog * 0.8;
+      for (let x = 0; x < W; x++) {
+        const px = ((x - W/2) * z) / fov;
+        const wx = camX + (cosA * z - sinA * px);
+        const wy = camY + (sinA * z + cosA * px);
+        const tx = ((wx / TILE) * TEX_TILE) | 0;
+        const ty = ((wy / TILE) * TEX_TILE) | 0;
+        let r, g, b;
+        if (tx < 0 || ty < 0 || tx >= tex.width || ty >= tex.height) {
+          r = 31; g = 156; b = 46;
+        } else {
+          const idx = (ty * tex.width + tx) * 4;
+          r = texData[idx]; g = texData[idx+1]; b = texData[idx+2];
+        }
+        r = (r * fr + (1-fr)*203) | 0;
+        g = (g * fr + (1-fr)*233) | 0;
+        b = (b * fr + (1-fr)*255) | 0;
+        const di = (y * W + x) * 4;
+        data[di]     = r;
+        data[di + 1] = g;
+        data[di + 2] = b;
+        data[di + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, H/2);
+  }
+
+  // ---- Project a world point into screen space ----
+  function projectWorld(wx, wy) {
+    const cosA = Math.cos(player.angle + Math.PI/2);
+    const sinA = Math.sin(player.angle + Math.PI/2);
+    const fov = 250;
+    const camHeight = 80;
+    // inverse of the floor mapping:
+    // wx = camX + cosA*z - sinA*px ; wy = camY + sinA*z + cosA*px
+    const dx = wx - player.x;
+    const dy = wy - player.y;
+    // z = cosA*dx + sinA*dy ; px = -sinA*dx + cosA*dy
+    const z =  cosA*dx + sinA*dy;
+    const px = -sinA*dx + cosA*dy;
+    if (z <= 1) return null;
+    const screenY = (camHeight * fov) / z;
+    if (screenY < 1) return null;
+    const sy = H/2 + screenY;
+    const sx = W/2 + (px * fov) / z;
+    const scale = fov / z;
+    return { sx, sy, scale, z };
+  }
+
+  function drawKartSprite(k) {
+    if (k.isPlayer) return;
+    const p = projectWorld(k.x, k.y);
+    if (!p) return;
+    const sprite = k.sprite;
+    const s = Math.max(0.2, Math.min(2.5, p.scale * 0.7));
+    const w = sprite.width * s;
+    const h = sprite.height * s;
+    ctx.drawImage(sprite, p.sx - w/2, p.sy - h, w, h);
+  }
+
+  function drawPlayerKart() {
+    // Always centered, slightly bouncing
+    const t = performance.now() / 100;
+    const bounce = Math.sin(t) * 2 * Math.min(1, Math.abs(player.speed)/200);
+    const w = 220, h = 180;
+    ctx.drawImage(player.sprite, W/2 - w/2, H - h + bounce, w, h);
+  }
+
+  function drawHUD() {
+    const lap = Math.max(1, Math.min(totalLaps, player.lap + 1));
+    const place = computePlace();
+    const speed = Math.abs(player.speed)|0;
+    hud.innerHTML = `
+      <div>LAP ${lap}/${totalLaps}</div>
+      <div>PLACE ${place}/4</div>
+      <div>SPEED ${speed}</div>
+    `;
+  }
+
+  function computePlace() {
+    const all = [player, ...cpus];
+    // by lap progress: lap + fraction along route based on waypoint distance
+    function score(k) {
+      const w = k.wp || 0;
+      const next = waypoints[w] || waypoints[0];
+      const d = Math.hypot(next.x - k.x, next.y - k.y);
+      return k.lap * 1000 + w * 200 - d / 10;
+    }
+    const sorted = all.slice().sort((a,b) => score(b) - score(a));
+    return sorted.indexOf(player) + 1;
+  }
+
+  // ---- Big text overlay ----
+  function drawText(text, y, size=64, color="#fff") {
+    ctx.font = `bold ${size}px Courier New, monospace`;
+    ctx.textAlign = "center";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText(text, W/2, y);
+    ctx.fillStyle = color;
+    ctx.fillText(text, W/2, y);
+  }
+
+  // ---- Main loop ----
+  let lastT = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+    bgOffset += dt * 20 * (player.speed/200);
+
+    if (running) {
+      // countdown
+      if (countdown > 0) {
+        if (now - countdownTimer > 1000) {
+          countdown -= 1;
+          countdownTimer = now;
+          if (countdown >= 0) beep(countdown === 0 ? 1200 : 600, 0.15);
+        }
+      } else {
+        // input
+        let steer = 0, throttle = false, brake = false, drift = false;
+        if (keys["arrowleft"]  || keys["a"]) steer -= 1;
+        if (keys["arrowright"] || keys["d"]) steer += 1;
+        if (keys["arrowup"]    || keys["w"]) throttle = true;
+        if (keys["arrowdown"]  || keys["s"]) brake = true;
+        if (keys["shift"])  drift = true;
+        if (keys[" "]) { /* horn */ if ((now|0) % 200 < 16) beep(440,0.05,"sawtooth",0.06); }
+        if (!finished) {
+          stepKart(player, steer, throttle, brake, drift, dt);
+        } else {
+          stepKart(player, 0, false, true, false, dt);
+        }
+        trackLap(player);
+        for (const k of cpus) { aiStep(k, dt); trackLap(k); }
+      }
+    }
+
+    // ---- Render ----
+    renderMode7();
+
+    // Sort CPU karts back-to-front for proper draw order
+    const others = cpus.slice().map(k => {
+      const dx = k.x - player.x, dy = k.y - player.y;
+      const cosA = Math.cos(player.angle + Math.PI/2);
+      const sinA = Math.sin(player.angle + Math.PI/2);
+      const z = cosA*dx + sinA*dy;
+      return { k, z };
+    }).sort((a,b) => b.z - a.z);
+    for (const {k} of others) drawKartSprite(k);
+
+    drawPlayerKart();
+    drawHUD();
+
+    if (running && countdown > 0) {
+      drawText(countdown === 3 ? "READY?" : (""+countdown), H/2 + 30, 96, "#ffcc00");
+    } else if (running && countdown === 0 && now - countdownTimer < 800) {
+      drawText("GO!", H/2 + 30, 120, "#22ff44");
+    }
+
+    if (finished) {
+      const place = finishOrder.indexOf(player) + 1;
+      drawText(place === 1 ? "YOU WIN!" : `FINISH! P${place}`, H/2 - 20, 64, place===1?"#ffcc00":"#fff");
+      drawText("Drücke R für Neustart", H/2 + 40, 24, "#fff");
+      if (keys["r"]) {
+        // reset
+        player.x = startX; player.y = startY - 6; player.angle = -Math.PI/2; player.speed = 0; player.lap = 0; player.passedTop=false; player.wp=1;
+        cpus[0].x = startX + 28; cpus[0].y = startY + 12; cpus[0].angle = -Math.PI/2; cpus[0].speed=0; cpus[0].lap=0; cpus[0].passedTop=false; cpus[0].wp=1;
+        cpus[1].x = startX - 28; cpus[1].y = startY + 12; cpus[1].angle = -Math.PI/2; cpus[1].speed=0; cpus[1].lap=0; cpus[1].passedTop=false; cpus[1].wp=1;
+        cpus[2].x = startX;      cpus[2].y = startY + 28; cpus[2].angle = -Math.PI/2; cpus[2].speed=0; cpus[2].lap=0; cpus[2].passedTop=false; cpus[2].wp=1;
+        startRace();
+      }
+    }
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
