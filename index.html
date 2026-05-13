@@ -79,6 +79,7 @@
     <h1>SUPER SELINA KART</h1>
     <p>Pfeiltasten: Lenken / Gas / Bremse</p>
     <p>Leertaste: Hupe &nbsp; • &nbsp; Shift: Drift</p>
+    <p>Blaue Pads = BOOST! &nbsp; • &nbsp; Such die geheime Abkürzung!</p>
     <p>3 Runden — schlag die Gegner!</p>
     <button id="startBtn">START</button>
   </div>
@@ -93,34 +94,35 @@
 
   // ---- Track map (Mode-7 style top-down bitmap) ----
   // Letters: G=grass, R=road, S=start/finish, W=wall, C=checkpoint(road)
+  // Tiles: G=grass, R=road, S=start/finish, B=boost pad, H=hidden shortcut (dirt path)
   const MAP = [
     "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
     "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
     "GGGGRRRRRRRRRRRRRRRRRRRRRRRRGGGG",
-    "GGGRRRRRRRRRRRRRRRRRRRRRRRRRRGGG",
+    "GGGRRRRRRRRRBBRRRRRRRRRRRRRRRGGG",
     "GGRRRRRRRRRRRRRRRRRRRRRRRRRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
-    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRBRGGGGGGGGGHHGGGGGGGGGRBRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGHHGGGGGGGGGRRRRGG",
     "GGRRSSSSSSSSSSSSSSSSSSSSSSSSRRGG",
-    "GGRRRRRRRRRRRRRRRRRRRRRRRRRRRRGG",
+    "GGRRRRRRRRRRRRBBRRRRRRRRRRRRRRGG",
     "GGGRRRRRRRRRRRRRRRRRRRRRRRRRRGGG",
     "GGGGRRRRRRRRRRRRRRRRRRRRRRRRGGGG",
     "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
@@ -135,7 +137,8 @@
     if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return "G";
     return MAP[ty][tx];
   }
-  function isRoad(c) { return c === "R" || c === "S" || c === "C"; }
+  function isRoad(c) { return c === "R" || c === "S" || c === "C" || c === "B" || c === "H"; }
+  function isBoost(c) { return c === "B"; }
 
   // ---- Build a tile texture image (Mode-7 source) ----
   // We render the whole map into an offscreen canvas at high res, then sample it for Mode-7.
@@ -165,12 +168,46 @@
           tctx.fillStyle = "#6b5848";
           tctx.fillRect(px, py, TEX_TILE, TEX_TILE / 2);
         } else if (c === "S") {
-          // start/finish: black & white checker
           for (let yy = 0; yy < TEX_TILE; yy += 4)
             for (let xx = 0; xx < TEX_TILE; xx += 4) {
               tctx.fillStyle = (((xx + yy) >> 2) & 1) ? "#fff" : "#000";
               tctx.fillRect(px + xx, py + yy, 4, 4);
             }
+        } else if (c === "B") {
+          // boost pad: cyan/blue with chevrons
+          tctx.fillStyle = "#0a2858";
+          tctx.fillRect(px, py, TEX_TILE, TEX_TILE);
+          tctx.fillStyle = "#3ad1ff";
+          for (let i = 0; i < 3; i++) {
+            const yy = py + 4 + i * 9;
+            tctx.beginPath();
+            tctx.moveTo(px + 4,             yy + 6);
+            tctx.lineTo(px + TEX_TILE/2,    yy);
+            tctx.lineTo(px + TEX_TILE - 4,  yy + 6);
+            tctx.lineTo(px + TEX_TILE - 4,  yy + 9);
+            tctx.lineTo(px + TEX_TILE/2,    yy + 3);
+            tctx.lineTo(px + 4,             yy + 9);
+            tctx.closePath();
+            tctx.fill();
+          }
+        } else if (c === "H") {
+          // hidden shortcut: dirt path that blends with grass
+          tctx.fillStyle = "#1f9c2e";
+          tctx.fillRect(px, py, TEX_TILE, TEX_TILE);
+          tctx.fillStyle = "#8c6a3f";
+          tctx.fillRect(px + 4, py, TEX_TILE - 8, TEX_TILE);
+          tctx.fillStyle = "#6b4f2a";
+          for (let i = 0; i < 6; i++) {
+            const rx = px + 6 + ((i * 7) % (TEX_TILE - 12));
+            const ry = py + ((i * 13) % (TEX_TILE - 4));
+            tctx.fillRect(rx, ry, 3, 2);
+          }
+          // tufts of grass at edges
+          tctx.fillStyle = "#178a26";
+          for (let i = 0; i < TEX_TILE; i += 6) {
+            tctx.fillRect(px + 2, py + i, 2, 3);
+            tctx.fillRect(px + TEX_TILE - 4, py + i + 3, 2, 3);
+          }
         }
       }
     }
@@ -179,6 +216,7 @@
       for (let x = 0; x < MAP_W; x++) {
         const c = MAP[y][x];
         if (!isRoad(c)) continue;
+        if (c === "H") continue; // hidden shortcut has no curb so it blends in
         const px = x * TEX_TILE, py = y * TEX_TILE;
         const neighbors = [
           [0,-1],[0,1],[-1,0],[1,0],
@@ -186,7 +224,8 @@
         for (const [dx,dy] of neighbors) {
           const nx = x+dx, ny = y+dy;
           if (nx<0||ny<0||nx>=MAP_W||ny>=MAP_H) continue;
-          if (!isRoad(MAP[ny][nx])) {
+          const nc = MAP[ny][nx];
+          if (!isRoad(nc)) {
             // draw red/white curb stripe
             tctx.save();
             for (let i = 0; i < TEX_TILE; i += 8) {
@@ -221,6 +260,7 @@
       lap: 0,
       wp: 1,
       passedTop: false,
+      boostTime: 0,
       sprite: null,
     };
   }
@@ -319,6 +359,7 @@
   let finished = false;
   let finishOrder = [];
   let bgOffset = 0;
+  let flashBoost = 0;
 
   function startRace() {
     running = true;
@@ -337,7 +378,19 @@
 
   // ---- Physics (velocity vector with grip / inertia) ----
   function stepKart(k, steerInput, throttle, brake, drift, dt) {
-    const onRoad = isRoad(tileAt(k.x, k.y));
+    const currentTile = tileAt(k.x, k.y);
+    const onRoad = isRoad(currentTile);
+
+    // Boost pad: trigger once on entry, lasts ~1.2s
+    if (isBoost(currentTile) && k.boostTime <= 0.5) {
+      k.boostTime = 1.4;
+      if (k.isPlayer) {
+        beep(1200, 0.08, "square", 0.06);
+        beep(1600, 0.12, "sawtooth", 0.05);
+        flashBoost = 0.5;
+      }
+    }
+    if (k.boostTime > 0) k.boostTime -= dt;
 
     // Decompose world velocity into forward / lateral relative to facing
     const cosA = Math.cos(k.angle), sinA = Math.sin(k.angle);
@@ -345,13 +398,16 @@
     let lat = -sinA * k.vx + cosA * k.vy;
 
     // Engine forces
-    const maxFwd = onRoad ? 360 : 150;
+    const boosting = k.boostTime > 0;
+    const maxFwd = boosting ? 560 : (onRoad ? 360 : 150);
     const maxRev = -120;
-    const accel  = onRoad ? 280 : 110;
+    const accel  = boosting ? 900 : (onRoad ? 280 : 110);
     const brakeF = 520;
     const engineBrake = onRoad ? 90 : 220;
 
-    if (throttle && !brake) {
+    if (boosting && fwd < maxFwd) {
+      fwd += accel * dt;
+    } else if (throttle && !brake) {
       fwd += accel * dt;
     } else if (brake && !throttle) {
       // brake if moving forward, otherwise reverse
@@ -452,17 +508,16 @@
     stepKart(k, steer, !sharp || Math.abs(k.fwd||0) < 120, sharp && Math.abs(k.fwd||0) > 200, Math.abs(diff) > 0.7, dt);
   }
 
-  // ---- Lap tracking ----
-  // Player crosses S row going UP from y>26*TILE to y<25*TILE => +1 lap
+  // ---- Lap tracking (requires hitting BOTH the top and the right side) ----
   function trackLap(k) {
     const ty = Math.floor(k.y / TILE);
     const tx = Math.floor(k.x / TILE);
-    // Checkpoint at top of map
     if (ty <= 4 && tx >= 4 && tx <= 27) k.passedTop = true;
-    // Finish line crossing
-    if (k.passedTop && ty >= 25 && ty <= 26 && tx >= 4 && tx <= 27) {
+    if (tx >= 26 && ty >= 4 && ty <= 25) k.passedRight = true;
+    if (k.passedTop && k.passedRight && ty >= 25 && ty <= 26 && tx >= 4 && tx <= 27) {
       k.lap += 1;
       k.passedTop = false;
+      k.passedRight = false;
       if (k.isPlayer) beep(880, 0.2, "square", 0.08);
       if (k.lap >= totalLaps && !finishOrder.includes(k)) {
         finishOrder.push(k);
@@ -662,6 +717,35 @@
     for (const {k} of others) drawKartSprite(k);
 
     drawPlayerKart();
+
+    // Boost effect: speed lines + flash + colored vignette
+    if (player.boostTime > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = "#3ad1ff";
+      ctx.lineWidth = 2;
+      const lines = 14;
+      const t = now / 30;
+      for (let i = 0; i < lines; i++) {
+        const ang = (i / lines) * Math.PI * 2 + t * 0.05;
+        const r1 = 180 + (i*37 + t) % 80;
+        const r2 = r1 + 80;
+        ctx.beginPath();
+        ctx.moveTo(W/2 + Math.cos(ang)*r1, H/2 + Math.sin(ang)*r1);
+        ctx.lineTo(W/2 + Math.cos(ang)*r2, H/2 + Math.sin(ang)*r2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if (flashBoost > 0) {
+      ctx.save();
+      ctx.globalAlpha = flashBoost;
+      ctx.fillStyle = "#3ad1ff";
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+      flashBoost -= dt * 2.5;
+    }
+
     drawHUD();
 
     if (running && countdown > 0) {
@@ -679,7 +763,8 @@
           k.x = startX + ox; k.y = startY + oy;
           k.angle = -Math.PI/2;
           k.vx = 0; k.vy = 0; k.speed = 0; k.fwd = 0;
-          k.lap = 0; k.passedTop = false; k.wp = 1;
+          k.lap = 0; k.passedTop = false; k.passedRight = false; k.wp = 1;
+          k.boostTime = 0;
         }
         reset(player, 0, -6);
         reset(cpus[0], 28, 12);
