@@ -96,33 +96,33 @@
   const MAP = [
     "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
     "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGRRRRRRRRRRRRRRRRRRRRRRRRGGGG",
     "GGGRRRRRRRRRRRRRRRRRRRRRRRRRRGGG",
     "GGRRRRRRRRRRRRRRRRRRRRRRRRRRRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRGGGGGRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGRRRRRRRRRGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
-    "GGRRGGGGGGGGGGGGGGGGGGGGGGGGRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
+    "GGRRRRGGGGGGGGGGGGGGGGGGGGRRRRGG",
     "GGRRSSSSSSSSSSSSSSSSSSSSSSSSRRGG",
     "GGRRRRRRRRRRRRRRRRRRRRRRRRRRRRGG",
     "GGGRRRRRRRRRRRRRRRRRRRRRRRRRRGGG",
-    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGRRRRRRRRRRRRRRRRRRRRRRRRGGGG",
     "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
   ];
   const MAP_W = MAP[0].length;
@@ -214,13 +214,13 @@
     return {
       x: startX,
       y: startY,
-      angle: -Math.PI/2, // facing up
-      speed: 0,
+      angle: -Math.PI/2,
+      vx: 0, vy: 0,
       color,
       isPlayer: !!isPlayer,
       lap: 0,
-      checkpoint: 0,
-      lastSide: 1,
+      wp: 1,
+      passedTop: false,
       sprite: null,
     };
   }
@@ -273,8 +273,31 @@
   addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase())) e.preventDefault(); });
   addEventListener("keyup",   e => { keys[e.key.toLowerCase()] = false; });
 
-  // ---- Audio (simple WebAudio beeps) ----
+  // ---- Audio ----
   let actx = null;
+  let engineOsc = null, engineGain = null;
+  function ensureAudio() {
+    if (actx) return;
+    try {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      engineOsc = actx.createOscillator();
+      engineGain = actx.createGain();
+      engineOsc.type = "sawtooth";
+      engineOsc.frequency.value = 80;
+      engineGain.gain.value = 0;
+      engineOsc.connect(engineGain);
+      engineGain.connect(actx.destination);
+      engineOsc.start();
+    } catch(e){}
+  }
+  function setEngine(speed, onRoad) {
+    if (!actx || !engineOsc) return;
+    const s = Math.abs(speed);
+    const target = 60 + s * 1.4;
+    engineOsc.frequency.setTargetAtTime(target, actx.currentTime, 0.05);
+    const vol = Math.min(0.06, 0.012 + s/8000) * (onRoad ? 1 : 1.4);
+    engineGain.gain.setTargetAtTime(vol, actx.currentTime, 0.08);
+  }
   function beep(freq, dur=0.08, type="square", vol=0.05) {
     if (!actx) return;
     const o = actx.createOscillator();
@@ -304,9 +327,7 @@
     raceStart = 0;
     finished = false;
     finishOrder = [];
-    if (!actx) {
-      try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){}
-    }
+    ensureAudio();
   }
 
   startBtn.addEventListener("click", () => {
@@ -314,55 +335,121 @@
     startRace();
   });
 
-  // ---- Physics ----
+  // ---- Physics (velocity vector with grip / inertia) ----
   function stepKart(k, steerInput, throttle, brake, drift, dt) {
     const onRoad = isRoad(tileAt(k.x, k.y));
-    const maxSpeed = onRoad ? 320 : 140;
-    const accel = onRoad ? 220 : 90;
-    const decel = 300;
-    const friction = onRoad ? 60 : 180;
 
-    if (throttle) k.speed += accel * dt;
-    if (brake)    k.speed -= decel * dt;
-    // friction
-    if (!throttle && !brake) {
-      if (k.speed > 0) k.speed = Math.max(0, k.speed - friction*dt);
-      else if (k.speed < 0) k.speed = Math.min(0, k.speed + friction*dt);
+    // Decompose world velocity into forward / lateral relative to facing
+    const cosA = Math.cos(k.angle), sinA = Math.sin(k.angle);
+    let fwd =  cosA * k.vx + sinA * k.vy;
+    let lat = -sinA * k.vx + cosA * k.vy;
+
+    // Engine forces
+    const maxFwd = onRoad ? 360 : 150;
+    const maxRev = -120;
+    const accel  = onRoad ? 280 : 110;
+    const brakeF = 520;
+    const engineBrake = onRoad ? 90 : 220;
+
+    if (throttle && !brake) {
+      fwd += accel * dt;
+    } else if (brake && !throttle) {
+      // brake if moving forward, otherwise reverse
+      if (fwd > 0) fwd = Math.max(0, fwd - brakeF * dt);
+      else        fwd = Math.max(maxRev, fwd - accel * 0.6 * dt);
+    } else {
+      // engine braking
+      if (fwd > 0) fwd = Math.max(0, fwd - engineBrake * dt);
+      if (fwd < 0) fwd = Math.min(0, fwd + engineBrake * dt);
     }
-    k.speed = Math.max(-120, Math.min(maxSpeed, k.speed));
+    fwd = Math.max(maxRev, Math.min(maxFwd, fwd));
 
-    const steerRate = drift ? 3.2 : 2.2;
-    k.angle += steerInput * steerRate * dt * (Math.abs(k.speed) / 200 + 0.3);
+    // Steering: rate scales with forward speed (no turn while still)
+    const speedFactor = Math.min(1, Math.abs(fwd) / 120);
+    const baseSteer = drift ? 2.4 : 3.0;
+    // less responsive at very high speed (understeer)
+    const steerRate = baseSteer * (1 - Math.min(0.45, Math.abs(fwd)/900));
+    const dir = fwd >= 0 ? 1 : -1;
+    k.angle += steerInput * steerRate * speedFactor * dir * dt;
 
-    const nx = k.x + Math.cos(k.angle) * k.speed * dt;
-    const ny = k.y + Math.sin(k.angle) * k.speed * dt;
+    // Lateral grip: how quickly lateral velocity bleeds off
+    // Drift = low grip → car slides
+    let gripPerSec = onRoad ? (drift ? 1.4 : 5.5) : 0.9;
+    lat *= Math.max(0, 1 - gripPerSec * dt);
 
-    // wall = map edges only; off-road just slows
-    if (nx > TILE && nx < (MAP_W-1)*TILE) k.x = nx;
-    else k.speed *= 0.5;
-    if (ny > TILE && ny < (MAP_H-1)*TILE) k.y = ny;
-    else k.speed *= 0.5;
+    // Recompose world velocity
+    k.vx =  cosA * fwd - sinA * lat;
+    k.vy =  sinA * fwd + cosA * lat;
+
+    // Move with sub-step + wall handling on the road border
+    const steps = 3;
+    const sdt = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      let nx = k.x + k.vx * sdt;
+      let ny = k.y + k.vy * sdt;
+
+      // hard map edge
+      nx = Math.max(TILE, Math.min((MAP_W-1)*TILE - 1, nx));
+      ny = Math.max(TILE, Math.min((MAP_H-1)*TILE - 1, ny));
+
+      // probe horizontal and vertical separately so we slide along the grass border
+      const wasOn = isRoad(tileAt(k.x, k.y));
+      const onAfterX = isRoad(tileAt(nx, k.y));
+      const onAfterY = isRoad(tileAt(k.x, ny));
+
+      // If we were on the road and now hit grass moving in one axis,
+      // bounce a bit and lose energy on that axis. Otherwise allow it.
+      if (wasOn && !onAfterX) {
+        // moving sideways off the road → bounce back, kill velocity
+        k.vx *= -0.25;
+      } else {
+        k.x = nx;
+      }
+      if (wasOn && !onAfterY) {
+        k.vy *= -0.25;
+      } else {
+        k.y = ny;
+      }
+    }
+
+    // Off-road rumble drag (in addition to lower top speed)
+    if (!onRoad) {
+      const drag = 0.6 * dt;
+      k.vx *= Math.max(0, 1 - drag);
+      k.vy *= Math.max(0, 1 - drag);
+    }
+
+    // Store last computed forward speed for HUD / sound
+    k.speed = Math.hypot(k.vx, k.vy) * (fwd >= 0 ? 1 : -1);
+    k.fwd = fwd;
+    k.onRoad = onRoad;
   }
 
-  // Simple AI: follow waypoints around the outer loop
+  // Waypoint loop (counter-clockwise around the oval, inside the road band)
   const waypoints = [
-    {x: 4*TILE+TILE/2,  y: 25*TILE+TILE/2},
-    {x: 4*TILE+TILE/2,  y: 4*TILE+TILE/2},
-    {x: 27*TILE+TILE/2, y: 4*TILE+TILE/2},
-    {x: 27*TILE+TILE/2, y: 25*TILE+TILE/2},
+    {x: 3.5*TILE,  y: 25*TILE},
+    {x: 3.5*TILE,  y: 14*TILE},
+    {x: 3.5*TILE,  y: 4*TILE},
+    {x: 14*TILE,   y: 3.5*TILE},
+    {x: 27*TILE,   y: 3.5*TILE},
+    {x: 28.5*TILE, y: 14*TILE},
+    {x: 28.5*TILE, y: 25*TILE},
+    {x: 22*TILE,   y: 26.5*TILE},
+    {x: 10*TILE,   y: 26.5*TILE},
   ];
   function aiStep(k, dt) {
-    if (!k.wp) k.wp = 1;
     const target = waypoints[k.wp];
     const dx = target.x - k.x, dy = target.y - k.y;
     const dist = Math.hypot(dx, dy);
-    if (dist < TILE * 1.2) k.wp = (k.wp + 1) % waypoints.length;
+    if (dist < TILE * 1.4) k.wp = (k.wp + 1) % waypoints.length;
     const desired = Math.atan2(dy, dx);
     let diff = desired - k.angle;
     while (diff > Math.PI) diff -= Math.PI*2;
     while (diff < -Math.PI) diff += Math.PI*2;
-    const steer = Math.max(-1, Math.min(1, diff * 2));
-    stepKart(k, steer, true, false, Math.abs(diff) > 0.6, dt);
+    const steer = Math.max(-1, Math.min(1, diff * 1.8));
+    // throttle off slightly for sharp upcoming turns
+    const sharp = Math.abs(diff) > 0.9;
+    stepKart(k, steer, !sharp || Math.abs(k.fwd||0) < 120, sharp && Math.abs(k.fwd||0) > 200, Math.abs(diff) > 0.7, dt);
   }
 
   // ---- Lap tracking ----
@@ -558,6 +645,7 @@
         trackLap(player);
         for (const k of cpus) { aiStep(k, dt); trackLap(k); }
       }
+      setEngine(player.speed || 0, player.onRoad !== false);
     }
 
     // ---- Render ----
@@ -587,11 +675,16 @@
       drawText(place === 1 ? "YOU WIN!" : `FINISH! P${place}`, H/2 - 20, 64, place===1?"#ffcc00":"#fff");
       drawText("Drücke R für Neustart", H/2 + 40, 24, "#fff");
       if (keys["r"]) {
-        // reset
-        player.x = startX; player.y = startY - 6; player.angle = -Math.PI/2; player.speed = 0; player.lap = 0; player.passedTop=false; player.wp=1;
-        cpus[0].x = startX + 28; cpus[0].y = startY + 12; cpus[0].angle = -Math.PI/2; cpus[0].speed=0; cpus[0].lap=0; cpus[0].passedTop=false; cpus[0].wp=1;
-        cpus[1].x = startX - 28; cpus[1].y = startY + 12; cpus[1].angle = -Math.PI/2; cpus[1].speed=0; cpus[1].lap=0; cpus[1].passedTop=false; cpus[1].wp=1;
-        cpus[2].x = startX;      cpus[2].y = startY + 28; cpus[2].angle = -Math.PI/2; cpus[2].speed=0; cpus[2].lap=0; cpus[2].passedTop=false; cpus[2].wp=1;
+        function reset(k, ox, oy) {
+          k.x = startX + ox; k.y = startY + oy;
+          k.angle = -Math.PI/2;
+          k.vx = 0; k.vy = 0; k.speed = 0; k.fwd = 0;
+          k.lap = 0; k.passedTop = false; k.wp = 1;
+        }
+        reset(player, 0, -6);
+        reset(cpus[0], 28, 12);
+        reset(cpus[1], -28, 12);
+        reset(cpus[2], 0, 28);
         startRace();
       }
     }
